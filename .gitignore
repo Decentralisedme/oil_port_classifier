@@ -1,0 +1,20 @@
+# Data (often large / licensed - don't commit)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Outputs
+outputs/*
+!outputs/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Misc
+.DS_Store
+.ipynb_checkpoints/
