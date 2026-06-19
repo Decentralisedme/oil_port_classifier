@@ -179,8 +179,13 @@ pip install -r requirements.txt
 
 ## Getting the data
 
-1. **WPI**: https://msi.nga.mil/Publications/WPI -> download CSV ->
-   save to `data/raw/` with "wpi" in the filename.
+1. **WPI**: https://msi.nga.mil/Publications/WPI -> download the
+   **Shapefile** export (not the MS Access database - avoids needing
+   Access/ODBC drivers; not the PDF - not structured data). Drop the
+   downloaded `.zip` (or extracted `.shp`/`.shx`/`.dbf`) straight into
+   `data/raw/` with "wpi" in the filename - `load_wpi()` reads shapefiles
+   directly via `pyshp` (pure Python, no GDAL needed) and also accepts a
+   plain CSV if NGA's site offers one in future.
 2. **GEM**: https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/
    -> free signup -> download xlsx -> save to `data/raw/` with "gem" in
    the filename.

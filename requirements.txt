@@ -4,3 +4,4 @@ scipy>=1.10
 pyarrow>=14.0      # parquet I/O
 requests>=2.31     # Overpass API queries
 openpyxl>=3.1      # reading GEM .xlsx exports
+pyshp>=2.3         # reading WPI shapefile export (pure Python, no GDAL)

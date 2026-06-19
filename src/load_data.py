@@ -41,14 +41,19 @@ OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 # World Port Index
 # ---------------------------------------------------------------------------
 
-# Common column-name variants seen across WPI export versions.
+# Common column-name variants seen across WPI export versions (CSV and
+# shapefile .dbf attribute names - shapefile fields are often short,
+# truncated/abbreviated, e.g. PORT_NAME, INDEX_NO, HARBORSIZE).
 _WPI_COLUMN_MAP = {
     "port_name": "port_name",
     "main_port_name": "port_name",
     "portname": "port_name",
     "world_port_index_number": "wpi_number",
     "index_number": "wpi_number",
+    "index_no": "wpi_number",
     "wpi_number": "wpi_number",
+    "wpi": "wpi_number",
+    "regional": "wpi_number",
     "country_code": "country",
     "country": "country",
     "latitude": "latitude",
@@ -65,12 +70,56 @@ _WPI_COLUMN_MAP = {
 }
 
 
+def _read_wpi_shapefile(path: Path) -> pd.DataFrame:
+    """
+    Read a WPI shapefile export (.shp/.shx/.dbf, possibly bundled in a
+    .zip) using pyshp - pure Python, no GDAL/system deps required.
+    """
+    import shapefile  # pyshp
+
+    if path.suffix.lower() == ".zip":
+        import zipfile
+        extract_dir = RAW_DIR / (path.stem + "_extracted")
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(path) as zf:
+            zf.extractall(extract_dir)
+        shp_candidates = sorted(extract_dir.rglob("*.shp"))
+        if not shp_candidates:
+            raise FileNotFoundError(f"No .shp file found inside {path}")
+        shp_path = shp_candidates[0]
+    elif path.suffix.lower() == ".shp":
+        shp_path = path
+    else:
+        raise ValueError(f"Expected a .shp or .zip file, got {path}")
+
+    sf = shapefile.Reader(str(shp_path))
+    field_names = [f[0] for f in sf.fields[1:]]  # skip DeletionFlag
+
+    rows = []
+    for sr in sf.iterShapeRecords():
+        rec = dict(zip(field_names, sr.record))
+        # Prefer the actual point geometry over any LAT/LON attribute
+        # columns (geometry is authoritative and always present).
+        try:
+            lon, lat = sr.shape.points[0]
+        except (IndexError, AttributeError):
+            lon, lat = None, None
+        rec["latitude"] = lat
+        rec["longitude"] = lon
+        rows.append(rec)
+
+    return pd.DataFrame(rows)
+
+
 def load_wpi(path: str | Path | None = None) -> pd.DataFrame:
     """
-    Load a World Port Index CSV export.
+    Load a World Port Index export - CSV, or shapefile (.shp directly, or
+    .zip containing .shp/.shx/.dbf).
 
     Download from NGA MSI: https://msi.nga.mil/Publications/WPI
-    (CSV / shapefile export - use the CSV).
+    The current (2019 edition, still the latest as of writing) shapefile
+    download is recommended - no GDAL/Access driver needed, just pyshp
+    (pure Python, installed via requirements.txt).
 
     Returns a dataframe with at least:
       port_name, wpi_number, country, latitude, longitude,
@@ -78,16 +127,27 @@ def load_wpi(path: str | Path | None = None) -> pd.DataFrame:
     (plus any other original columns, lowercased).
     """
     if path is None:
-        candidates = sorted(RAW_DIR.glob("*wpi*.csv")) + sorted(RAW_DIR.glob("*WPI*.csv"))
+        candidates = (
+            sorted(RAW_DIR.glob("*wpi*.csv")) + sorted(RAW_DIR.glob("*WPI*.csv")) +
+            sorted(RAW_DIR.glob("*wpi*.shp")) + sorted(RAW_DIR.glob("*WPI*.shp")) +
+            sorted(RAW_DIR.glob("*wpi*.zip")) + sorted(RAW_DIR.glob("*WPI*.zip")) +
+            sorted(RAW_DIR.glob("*Pub150*.zip")) + sorted(RAW_DIR.glob("*pub150*.zip"))
+        )
         if not candidates:
             raise FileNotFoundError(
-                f"No WPI csv found in {RAW_DIR}. "
-                "Download from https://msi.nga.mil/Publications/WPI and "
-                "place the CSV there (filename containing 'wpi')."
+                f"No WPI file found in {RAW_DIR}. "
+                "Download from https://msi.nga.mil/Publications/WPI "
+                "(CSV or Shapefile export) and place it there "
+                "(filename containing 'wpi', or the shapefile .zip as downloaded)."
             )
         path = candidates[0]
 
-    df = pd.read_csv(path)
+    path = Path(path)
+    if path.suffix.lower() in (".shp", ".zip"):
+        df = _read_wpi_shapefile(path)
+    else:
+        df = pd.read_csv(path)
+
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     rename = {c: _WPI_COLUMN_MAP.get(c, c) for c in df.columns}
     df = df.rename(columns=rename)
