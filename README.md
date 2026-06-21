@@ -76,6 +76,18 @@ Each terminal in the master reference table gets a `seed_label` -
     seeds the alternation chain for a large share of voyages. See
     `data/raw/manual_terminal_labels.csv.example`.)
 
+`seed_label` is **pure direction** - it's the only field the
+alternation algorithm (Step 3) reads. Cargo type (crude / distillate /
+NGL) is tracked **separately**, in `seed_cargo_type` - same sources
+(GEM keywords + an optional third `cargo_type` column in
+`manual_terminal_labels.csv`), but the two are deliberately decoupled:
+a terminal can have a confident direction and an unknown cargo type
+(very common), and the alternation logic never needs to parse or care
+about product type to determine laden/ballast state. Leave `cargo_type`
+blank/omitted in your overrides CSV wherever you don't know it - it
+stays `UNKNOWN` and just doesn't get used; direction alone is what
+drives the actual goal (knowing if a vessel is full or empty).
+
 ### Step 3: voyage-sequence alternation (the key step)
 For each vessel, walk its port calls in chronological order:
   - Calls at terminals with `seed_label` LOAD/DISCHARGE get that label
@@ -208,7 +220,10 @@ pip install -r requirements.txt
    `data/raw/manual_terminal_labels.csv` and fill in any terminals you
    already know the role of - `match,label` where `label` is
    LOAD / DISCHARGE / BOTH / STS_HUB. `match` is matched as a substring
-   against terminal name/id (case-insensitive).
+   against terminal name/id (case-insensitive). An optional third
+   column, `cargo_type` (CRUDE / DISTILLATE / NGL), can be added per row
+   if you also know the product - leave it blank where you don't, it's
+   tracked separately from direction and never required.
 
 ## Running
 

@@ -26,8 +26,16 @@ Strategy:
        - sources (list of contributing datasets)
        - gem_terminal_type / gem_status (if from GEM)
        - osm_tags (if from OSM)
-       - seed_label (LOAD / DISCHARGE / BOTH / UNKNOWN / STS_HUB)
+       - seed_label (LOAD / DISCHARGE / BOTH / UNKNOWN / STS_HUB) -
+         pure DIRECTION, the only field classify.py's alternation
+         algorithm reads
        - seed_source ("gem_keyword" / "manual_override" / "none")
+       - seed_cargo_type (CRUDE / DISTILLATE / NGL / UNKNOWN) - SEPARATE,
+         optional signal, never read by the alternation algorithm.
+         Sparse by design - most terminals will be UNKNOWN here, which
+         is fine, since direction (laden/ballast state) doesn't require
+         knowing the specific product.
+       - cargo_type_source ("gem_keyword" / "manual_override" / "none")
 
 This table is the geofencing AND seed-label reference for classify.py.
 
@@ -111,6 +119,50 @@ _STS_KEYWORDS = [
     r"sts", r"ship.to.ship", r"transshipment", r"trans.shipment", r"lightering",
 ]
 
+# Cargo-type detection is INTENTIONALLY a separate, optional signal from
+# seed_label (direction). The alternation algorithm in classify.py only
+# ever reads seed_label - it never needs to know or care what product is
+# involved. seed_cargo_type is sparse by design: most terminals won't
+# match anything here and will just stay "UNKNOWN", which is fine, since
+# laden/ballast STATE (the actual goal) doesn't require knowing the
+# specific product.
+_CRUDE_KEYWORDS = [r"crude oil", r"\bcrude\b"]
+_DISTILLATE_KEYWORDS = [
+    r"refined product", r"\bdistillate", r"gasoline", r"diesel", r"jet fuel",
+    r"naphtha", r"fuel oil", r"gasoil", r"kerosene", r"\bproduct terminal\b",
+]
+_NGL_KEYWORDS = [r"\bngl\b", r"natural gas liquid", r"\blpg\b", r"propane", r"butane"]
+
+
+def classify_terminal_cargo_type(row: pd.Series) -> tuple[str, str]:
+    """
+    Derive (seed_cargo_type, cargo_type_source) from a terminal row's GEM
+    metadata - completely independent of classify_terminal_seed()'s
+    direction call. A terminal can have a known direction and an unknown
+    cargo type, or vice versa.
+
+    Returns ("UNKNOWN", "none") if nothing matches or no GEM data present.
+    Priority on ambiguous text (matches multiple categories): CRUDE takes
+    precedence over DISTILLATE over NGL, since GOIT/GEM oil-terminal text
+    skews towards crude-handling facilities by default.
+    """
+    text_parts = [
+        str(row.get("gem_terminal_type") or ""),
+        str(row.get("gem_status") or ""),
+        str(row.get("terminal_name") or ""),
+    ]
+    text = " ".join(text_parts).lower()
+    if not text.strip():
+        return "UNKNOWN", "none"
+
+    if any(re.search(k, text) for k in _CRUDE_KEYWORDS):
+        return "CRUDE", "gem_keyword"
+    if any(re.search(k, text) for k in _DISTILLATE_KEYWORDS):
+        return "DISTILLATE", "gem_keyword"
+    if any(re.search(k, text) for k in _NGL_KEYWORDS):
+        return "NGL", "gem_keyword"
+    return "UNKNOWN", "none"
+
 
 def classify_terminal_seed(row: pd.Series) -> tuple[str, str]:
     """
@@ -155,7 +207,18 @@ def apply_manual_overrides(
 ) -> pd.DataFrame:
     """
     Apply manual seed-label overrides from a CSV with columns:
-      match, label   (label in {LOAD, DISCHARGE, BOTH, STS_HUB, UNKNOWN})
+      match, label                (required)
+      match, label, cargo_type    (cargo_type column is OPTIONAL)
+
+    `label` in {LOAD, DISCHARGE, BOTH, STS_HUB, UNKNOWN} - this is pure
+    DIRECTION, consumed by the alternation algorithm.
+
+    `cargo_type` (optional column) in {CRUDE, DISTILLATE, NGL, UNKNOWN} -
+    this is a SEPARATE, optional signal, never read by the alternation
+    algorithm. Leave the column out entirely, or leave individual cells
+    blank, if you don't know/care about product type for a given
+    terminal - direction (LOAD/DISCHARGE) is the thing that actually
+    drives laden/ballast state inference.
 
     `match` is matched case-insensitively as a SUBSTRING against
     terminal_name OR terminal_id. First matching row wins per terminal.
@@ -177,6 +240,7 @@ def apply_manual_overrides(
     overrides.columns = [c.strip().lower() for c in overrides.columns]
     if not {"match", "label"}.issubset(overrides.columns):
         raise ValueError(f"{path} must have columns 'match' and 'label'")
+    has_cargo_col = "cargo_type" in overrides.columns
 
     out = terminals.copy()
     name_lower = out["terminal_name"].astype(str).str.lower()
@@ -188,6 +252,12 @@ def apply_manual_overrides(
         mask = name_lower.str.contains(pattern, regex=False) | id_lower.str.contains(pattern, regex=False)
         out.loc[mask, "seed_label"] = label
         out.loc[mask, "seed_source"] = "manual_override"
+
+        if has_cargo_col:
+            cargo_val = ov.get("cargo_type")
+            if pd.notna(cargo_val) and str(cargo_val).strip():
+                out.loc[mask, "seed_cargo_type"] = str(cargo_val).strip().upper()
+                out.loc[mask, "cargo_type_source"] = "manual_override"
 
     n_applied = (out["seed_source"] == "manual_override").sum()
     print(f"  applied manual overrides to {n_applied} terminal(s)")
@@ -273,6 +343,12 @@ def build_master_terminal_table(
     seeds = out.apply(classify_terminal_seed, axis=1, result_type="expand")
     seeds.columns = ["seed_label", "seed_source"]
     out = pd.concat([out, seeds], axis=1)
+
+    # Cargo type is a SEPARATE, optional signal - independent of
+    # direction (seed_label). See classify_terminal_cargo_type() docstring.
+    cargo = out.apply(classify_terminal_cargo_type, axis=1, result_type="expand")
+    cargo.columns = ["seed_cargo_type", "cargo_type_source"]
+    out = pd.concat([out, cargo], axis=1)
 
     return out
 

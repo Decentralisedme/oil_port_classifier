@@ -1,5 +1,5 @@
-match,label
-Ras Tanura,LOAD
-Fujairah,STS_HUB
-Europoort,DISCHARGE
-Singapore,BOTH
+match,label,cargo_type
+Ras Tanura,LOAD,CRUDE
+Fujairah,STS_HUB,
+Europoort,DISCHARGE,
+Singapore,BOTH,
