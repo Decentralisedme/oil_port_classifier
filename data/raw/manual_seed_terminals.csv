@@ -1,0 +1,11 @@
+terminal_name,latitude,longitude,seed_label
+Houston/Galveston,29.3,-94.8,BOTH
+Singapore,1.25,103.8,BOTH
+Fujairah,25.15,56.35,BOTH
+Ras Tanura / Sea Island,26.65,50.2,LOAD
+Rotterdam,51.95,4.0,DISCHARGE
+Al Basrah,30.5,47.8,LOAD
+Gwangyang,34.91,127.7,DISCHARGE
+Ulsan,35.5,129.4,DISCHARGE
+Malta Freeport,35.8,14.5,STS_HUB
+NY Harbor,40.6,-74.0,DISCHARGE

@@ -3,6 +3,8 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/raw/manual_terminal_labels.csv.example
+!data/raw/manual_seed_terminals.csv
 
 # Outputs
 outputs/*

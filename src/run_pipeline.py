@@ -28,7 +28,7 @@ from pathlib import Path
 import pandas as pd
 
 from load_data import load_wpi, load_gem, query_osm_oil_terminals, load_ais_positions, load_ais_static
-from clean_ports import build_master_terminal_table, save_master_table, apply_manual_overrides
+from clean_ports import build_master_terminal_table, save_master_table, apply_manual_overrides, apply_manual_seed_terminals
 from classify import (
     detect_stationary_periods,
     assign_terminal,
@@ -76,8 +76,10 @@ def main(
 
     print("Building master terminal table...")
     terminals = build_master_terminal_table(wpi, gem, osm)
-    print("Applying manual terminal-label overrides...")
+    print("Applying manual terminal-label overrides (name-matched)...")
     terminals = apply_manual_overrides(terminals)
+    print("Applying manual seed terminals (coordinate-matched)...")
+    terminals = apply_manual_seed_terminals(terminals)
     save_master_table(terminals)
     print(f"  {len(terminals)} terminals -> data/processed/master_terminals.parquet")
     n_seeded = (terminals["seed_label"] != "UNKNOWN").sum()

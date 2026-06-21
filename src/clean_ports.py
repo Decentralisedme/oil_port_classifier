@@ -264,6 +264,107 @@ def apply_manual_overrides(
     return out
 
 
+def apply_manual_seed_terminals(
+    terminals: pd.DataFrame,
+    path: str | Path | None = None,
+    match_radius_km: float = MATCH_RADIUS_KM,
+) -> pd.DataFrame:
+    """
+    Add/overwrite terminals using DIRECT COORDINATES, from a CSV with
+    columns:
+      terminal_name, latitude, longitude, seed_label
+      (optional: seed_cargo_type)
+
+    This is the most reliable way to seed major terminals you already
+    know, because it sidesteps name-matching entirely (no risk of
+    "Ras Tanura / Sea Island" failing to substring-match WPI's exact
+    port name string - lat/lon is unambiguous).
+
+    Behaviour: for each row, if there's an existing terminal within
+    `match_radius_km` (km), that terminal's seed_label/seed_cargo_type
+    are OVERWRITTEN (seed_source/cargo_type_source set to
+    "manual_coords") - the existing terminal_id, wpi_number etc. are
+    kept. If no existing terminal is nearby, a brand new terminal row is
+    appended (with a synthetic terminal_id "MANUAL-<n>").
+
+    If no file is found, returns `terminals` unchanged.
+    """
+    if path is None:
+        path = RAW_DIR / "manual_seed_terminals.csv"
+    path = Path(path)
+    if not path.exists():
+        print(f"  (no manual seed terminal file at {path} - skipping)")
+        return terminals
+
+    seeds = pd.read_csv(path)
+    seeds.columns = [c.strip().lower() for c in seeds.columns]
+    required = {"terminal_name", "latitude", "longitude", "seed_label"}
+    missing = required - set(seeds.columns)
+    if missing:
+        raise ValueError(f"{path} missing required columns {missing}. Found: {list(seeds.columns)}")
+    has_cargo_col = "seed_cargo_type" in seeds.columns
+
+    out = terminals.copy()
+    n_overwritten = 0
+    n_added = 0
+    new_rows = []
+
+    for i, seed in seeds.iterrows():
+        lat, lon = float(seed["latitude"]), float(seed["longitude"])
+        label = str(seed["seed_label"]).upper()
+        cargo = str(seed["seed_cargo_type"]).upper() if has_cargo_col and pd.notna(seed.get("seed_cargo_type")) else None
+
+        if len(out):
+            from geo_utils import haversine_km
+            dists = haversine_km(lat, lon, out["latitude"].to_numpy(), out["longitude"].to_numpy())
+            nearest_idx = dists.argmin()
+            nearest_dist = dists[nearest_idx]
+        else:
+            nearest_dist = float("inf")
+            nearest_idx = None
+
+        if nearest_dist <= match_radius_km:
+            out.iloc[nearest_idx, out.columns.get_loc("seed_label")] = label
+            out.iloc[nearest_idx, out.columns.get_loc("seed_source")] = "manual_coords"
+            if cargo:
+                out.iloc[nearest_idx, out.columns.get_loc("seed_cargo_type")] = cargo
+                out.iloc[nearest_idx, out.columns.get_loc("cargo_type_source")] = "manual_coords"
+            n_overwritten += 1
+        else:
+            new_rows.append({
+                "terminal_id": f"MANUAL-{i}",
+                "terminal_name": seed["terminal_name"],
+                "latitude": lat,
+                "longitude": lon,
+                "wpi_port_name": None,
+                "wpi_number": None,
+                "harbor_type": None,
+                "harbor_use": None,
+                "gem_terminal_type": None,
+                "gem_status": None,
+                "osm_tags": None,
+                "sources": "MANUAL",
+                "norm_name": normalise_name(seed["terminal_name"]),
+                "seed_label": label,
+                "seed_source": "manual_coords",
+                "seed_cargo_type": cargo or "UNKNOWN",
+                "cargo_type_source": "manual_coords" if cargo else "none",
+            })
+            n_added += 1
+
+    if new_rows:
+        out = pd.concat([out, pd.DataFrame(new_rows)], ignore_index=True)
+
+    # Ensure numeric dtype (concatenating an all-NaN empty frame with new
+    # rows can leave these as 'object' dtype, which breaks downstream
+    # geo_utils numpy operations).
+    out["latitude"] = pd.to_numeric(out["latitude"], errors="coerce")
+    out["longitude"] = pd.to_numeric(out["longitude"], errors="coerce")
+
+    print(f"  manual seed terminals: {n_overwritten} existing terminal(s) overwritten, {n_added} new terminal(s) added")
+    return out
+
+
 def build_master_terminal_table(
     wpi_df: pd.DataFrame,
     gem_df: pd.DataFrame | None = None,
@@ -337,16 +438,21 @@ def build_master_terminal_table(
                 "sources": "OSM" + (" + WPI-matched" if within else " (no WPI match, possible offshore SBM)"),
             })
 
-    out = pd.DataFrame(terminals)
+    _TERMINAL_COLUMNS = [
+        "terminal_id", "terminal_name", "latitude", "longitude",
+        "wpi_port_name", "wpi_number", "harbor_type", "harbor_use",
+        "gem_terminal_type", "gem_status", "osm_tags", "sources",
+    ]
+    out = pd.DataFrame(terminals, columns=_TERMINAL_COLUMNS) if terminals else pd.DataFrame(columns=_TERMINAL_COLUMNS)
     out["norm_name"] = out["terminal_name"].apply(normalise_name)
 
-    seeds = out.apply(classify_terminal_seed, axis=1, result_type="expand")
+    seeds = out.apply(classify_terminal_seed, axis=1, result_type="expand") if len(out) else pd.DataFrame(columns=["seed_label", "seed_source"])
     seeds.columns = ["seed_label", "seed_source"]
     out = pd.concat([out, seeds], axis=1)
 
     # Cargo type is a SEPARATE, optional signal - independent of
     # direction (seed_label). See classify_terminal_cargo_type() docstring.
-    cargo = out.apply(classify_terminal_cargo_type, axis=1, result_type="expand")
+    cargo = out.apply(classify_terminal_cargo_type, axis=1, result_type="expand") if len(out) else pd.DataFrame(columns=["seed_cargo_type", "cargo_type_source"])
     cargo.columns = ["seed_cargo_type", "cargo_type_source"]
     out = pd.concat([out, cargo], axis=1)
 
