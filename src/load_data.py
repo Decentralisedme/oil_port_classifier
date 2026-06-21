@@ -166,46 +166,94 @@ def load_wpi(path: str | Path | None = None) -> pd.DataFrame:
 # Global Energy Monitor - Global Oil Infrastructure Tracker
 # ---------------------------------------------------------------------------
 
+# Common column-name variants. NOTE: GOIT's actual schema is not fully
+# known until you have the file in hand - it's a PIPELINE tracker, so
+# expect columns oriented around pipeline segments (e.g. start/end
+# coordinates, pipeline name) ALONGSIDE any standalone facility rows.
+# This map covers the most likely variants; if your file doesn't match,
+# load_gem() will raise a clear error listing the actual columns found
+# so you can extend the map yourself.
 _GEM_COLUMN_MAP = {
     "unit_name": "terminal_name",
     "terminal_name": "terminal_name",
     "wiki_name": "terminal_name",
+    "project_name": "terminal_name",
+    "projectname": "terminal_name",
+    "pipeline_name": "terminal_name",
+    "facility_name": "terminal_name",
+    "name": "terminal_name",
     "country": "country",
+    "country/area": "country",
     "latitude": "latitude",
+    "lat": "latitude",
+    "start_latitude": "latitude",   # pipeline-segment rows: use the START point
+    "startlatitude": "latitude",
     "longitude": "longitude",
+    "lon": "longitude",
+    "start_longitude": "longitude",
+    "startlongitude": "longitude",
     "status": "status",
     "terminal_type": "terminal_type",
     "type": "terminal_type",
+    "facility_type": "terminal_type",
+    "facilitytype": "terminal_type",
+    "asset_type": "terminal_type",
     "capacity_(bbl)": "capacity_bbl",
     "capacity_bbl": "capacity_bbl",
+    "capacity_(bbl/d)": "capacity_bbl",
     "owner": "owner",
 }
 
 
-def load_gem(path: str | Path | None = None) -> pd.DataFrame:
+def load_gem(
+    path: str | Path | None = None,
+    sheet_name: str | int | None = 0,
+    facility_type_filter: str | None = None,
+) -> pd.DataFrame:
     """
-    Load a Global Energy Monitor Oil & Gas terminal/infrastructure export.
+    Load a Global Energy Monitor Global Oil Infrastructure Tracker (GOIT)
+    export.
 
-    Download (free account required):
-      https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/
+    IMPORTANT: GOIT is primarily a PIPELINE tracker (crude oil + NGL
+    transmission pipelines), not a general terminal/refinery database.
+    Expect most rows to be pipeline segments. Standalone terminal-type
+    facilities (if present) will typically be identifiable via a
+    terminal_type/facility_type column - use `facility_type_filter` to
+    keep only those (substring match, case-insensitive, e.g.
+    facility_type_filter="terminal").
 
-    Accepts .xlsx or .csv. Returns dataframe with at least:
+    Download (free, no account needed - just a short form):
+      https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/download-data/
+
+    `sheet_name`: GOIT xlsx exports are sometimes multi-sheet (e.g. one
+    sheet per pipeline vs. facility data). Defaults to the first sheet
+    (0) - if that's wrong for your file, open it once to check sheet
+    names and pass the correct one (str name or int index).
+
+    Returns a dataframe with at least:
       terminal_name, country, latitude, longitude, terminal_type, status
     """
     if path is None:
         candidates = sorted(RAW_DIR.glob("*gem*.xlsx")) + sorted(RAW_DIR.glob("*GEM*.xlsx"))
+        candidates += sorted(RAW_DIR.glob("*goit*.xlsx")) + sorted(RAW_DIR.glob("*GOIT*.xlsx"))
         candidates += sorted(RAW_DIR.glob("*gem*.csv"))
         if not candidates:
             raise FileNotFoundError(
-                f"No GEM file found in {RAW_DIR}. Download the Global Oil "
-                "Infrastructure Tracker from globalenergymonitor.org and "
-                "place it there (filename containing 'gem')."
+                f"No GEM/GOIT file found in {RAW_DIR}. Download from "
+                "https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/download-data/ "
+                "and place it there (filename containing 'gem' or 'goit')."
             )
         path = candidates[0]
 
     path = Path(path)
     if path.suffix.lower() == ".xlsx":
-        df = pd.read_excel(path)
+        df = pd.read_excel(path, sheet_name=sheet_name)
+        if isinstance(df, dict):
+            # sheet_name=None or ambiguous - caller needs to pick one
+            raise ValueError(
+                f"{path} has multiple sheets: {list(df.keys())}. "
+                "Pass sheet_name='<exact name>' to load_gem()."
+            )
     else:
         df = pd.read_csv(path)
 
@@ -216,9 +264,21 @@ def load_gem(path: str | Path | None = None) -> pd.DataFrame:
     required = {"latitude", "longitude"}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"GEM file missing expected columns {missing}. Found: {list(df.columns)}")
+        raise ValueError(
+            f"GEM/GOIT file missing expected columns {missing}. Found: {list(df.columns)}. "
+            "GOIT may store coordinates as pipeline start/end points or in a "
+            "differently-named column - check the actual column names and "
+            "extend _GEM_COLUMN_MAP in load_data.py if needed."
+        )
 
     df = df.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
+
+    if facility_type_filter is not None and "terminal_type" in df.columns:
+        before = len(df)
+        mask = df["terminal_type"].astype(str).str.contains(facility_type_filter, case=False, na=False)
+        df = df[mask].reset_index(drop=True)
+        print(f"  facility_type_filter='{facility_type_filter}': kept {len(df)}/{before} rows")
+
     df["source"] = "GEM"
     return df
 

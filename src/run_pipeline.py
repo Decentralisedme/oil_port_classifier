@@ -6,8 +6,10 @@ End-to-end orchestration. Run from the project root:
     python src/run_pipeline.py
 
 Expects:
-  data/raw/<something with 'wpi' in the name>.csv     (required)
-  data/raw/<something with 'gem' in the name>.xlsx     (optional)
+  data/raw/<something with 'wpi' in the name>.csv|.shp|.zip   (required)
+  data/raw/<something with 'gem'/'goit' in the name>.xlsx     (optional -
+      GOIT is pipeline-centric; gem_facility_type_filter="terminal"
+      (default) keeps only terminal-type rows, dropping pipeline segments)
   data/raw/osm_oil_terminals.json                      (optional, auto-fetched if bbox given)
   data/raw/<something with 'position' in the name>.parquet|.jsonl  (required for classification)
   data/raw/<something with 'static' in the name>.parquet|.jsonl    (required for classification)
@@ -44,6 +46,8 @@ OUTPUTS = ROOT / "outputs"
 def main(
     osm_bbox: tuple[float, float, float, float] | None = None,
     ais_time_col: str = "MsgTimestamp",
+    gem_facility_type_filter: str | None = "terminal",
+    gem_sheet_name: str | int | None = 0,
 ):
     OUTPUTS.mkdir(parents=True, exist_ok=True)
 
@@ -54,11 +58,13 @@ def main(
 
     gem = None
     try:
-        print("Loading GEM...")
-        gem = load_gem()
-        print(f"  {len(gem)} terminals")
+        print("Loading GEM/GOIT...")
+        gem = load_gem(sheet_name=gem_sheet_name, facility_type_filter=gem_facility_type_filter)
+        print(f"  {len(gem)} terminal-type facilities (after filter)")
     except FileNotFoundError as e:
         print(f"  skipped: {e}")
+    except ValueError as e:
+        print(f"  GEM load failed - check the file's actual columns/sheets: {e}")
 
     osm = None
     if osm_bbox is not None:

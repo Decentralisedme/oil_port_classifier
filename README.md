@@ -36,7 +36,7 @@ explicit confidence/method tags on every result.
 | Source | What it gives us | Caveats |
 |---|---|---|
 | **World Port Index (WPI)** | Global list of ports with one lat/lon per port, harbor type/size/use | One point per *port area*, not per terminal/berth. Free CSV from NGA MSI. |
-| **Global Energy Monitor (GEM) - Oil & Gas Infrastructure Tracker** | Terminal-level points: type (import/export/storage), status, capacity -> **seed labels** | Requires free account to download. Coverage best for major terminals; smaller/older terminals may be missing - fill gaps with `manual_terminal_labels.csv`. |
+| **Global Energy Monitor (GEM) - Global Oil Infrastructure Tracker (GOIT)** | Free xlsx download (short form, no account needed). **Note: GOIT is primarily a pipeline tracker** - most rows are pipeline segments, not standalone terminals. Use `facility_type_filter="terminal"` (the pipeline's default) to keep only terminal-type rows -> **seed labels** | Coverage is partial - good for terminals tied to a tracked pipeline, misses many standalone tank farms/SBMs. Fill gaps with `manual_terminal_labels.csv`. (A broader alternative, EDF/MethaneSAT's OGIM database, has an explicit "Petroleum Terminal" category but ships as a 3.1GB GeoPackage - not yet supported here.) |
 | **OpenStreetMap (Overpass API)** | Berth/jetty/SBM/mooring geometry, can refine WPI's port-level point to terminal-level | Patchy, especially offshore. Treat as supplementary/refinement, not primary. Doesn't contribute seed labels. |
 | **Your AIS feed (AISstream)** | Vessel stop locations/durations (via SOG + NavigationalStatus), voyage ordering per vessel, tanker pairing for STS | Does **NOT** give per-voyage draught. Need an **absolute capture timestamp** per message (the AIS internal `Timestamp` field is just seconds-of-minute, not usable for duration calculations). |
 
@@ -186,9 +186,15 @@ pip install -r requirements.txt
    `data/raw/` with "wpi" in the filename - `load_wpi()` reads shapefiles
    directly via `pyshp` (pure Python, no GDAL needed) and also accepts a
    plain CSV if NGA's site offers one in future.
-2. **GEM**: https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/
-   -> free signup -> download xlsx -> save to `data/raw/` with "gem" in
-   the filename.
+2. **GEM (GOIT)**: https://globalenergymonitor.org/projects/global-oil-infrastructure-tracker/download-data/
+   -> fill the short form (no account needed) -> download the xlsx ->
+   save to `data/raw/` with "gem" or "goit" in the filename. **Note:**
+   this dataset is primarily pipeline segments, not standalone terminals
+   - `load_gem(facility_type_filter="terminal")` (the pipeline default)
+   filters down to terminal-type rows only. Open the file once to check
+   its actual column names/sheet structure before your first run -
+   `load_gem()` raises a clear error listing the columns it found if
+   the auto-mapping doesn't match.
 3. **OSM**: handled automatically via Overpass if you pass a `bbox` to
    `main()` in `run_pipeline.py`. Keep bboxes regional (e.g. one
    country/strait at a time) - the public Overpass instance throttles
