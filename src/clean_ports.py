@@ -268,24 +268,29 @@ def apply_manual_seed_terminals(
     terminals: pd.DataFrame,
     path: str | Path | None = None,
     match_radius_km: float = MATCH_RADIUS_KM,
+    min_separation_km: float = 8.0,
 ) -> pd.DataFrame:
     """
     Add/overwrite terminals using DIRECT COORDINATES, from a CSV with
     columns:
       terminal_name, latitude, longitude, seed_label
-      (optional: seed_cargo_type)
+      (optional: seed_cargo_type, seed_confidence, notes)
 
-    This is the most reliable way to seed major terminals you already
-    know, because it sidesteps name-matching entirely (no risk of
-    "Ras Tanura / Sea Island" failing to substring-match WPI's exact
-    port name string - lat/lon is unambiguous).
+    Behaviour: for each seed row, if there's an existing terminal within
+    `match_radius_km` AND no other seed row has already been assigned to
+    that same existing terminal, that terminal's fields are OVERWRITTEN
+    (seed_source/cargo_type_source set to "manual_coords") - the existing
+    terminal_id, wpi_number etc. are kept.
 
-    Behaviour: for each row, if there's an existing terminal within
-    `match_radius_km` (km), that terminal's seed_label/seed_cargo_type
-    are OVERWRITTEN (seed_source/cargo_type_source set to
-    "manual_coords") - the existing terminal_id, wpi_number etc. are
-    kept. If no existing terminal is nearby, a brand new terminal row is
-    appended (with a synthetic terminal_id "MANUAL-<n>").
+    If no existing terminal is nearby, OR a nearby terminal was already
+    claimed by a previous seed row (within `min_separation_km` - handles
+    close-proximity pairs like Ras Tanura / Sea Island or Sikka /
+    Jamnagar that would otherwise both match the same WPI port), a new
+    standalone terminal row is appended (terminal_id "MANUAL-<n>").
+
+    `seed_confidence` and `notes` are stored as metadata columns in the
+    master terminal table - they never affect pipeline logic but are
+    useful for traceability in the output.
 
     If no file is found, returns `terminals` unchanged.
     """
@@ -302,33 +307,64 @@ def apply_manual_seed_terminals(
     missing = required - set(seeds.columns)
     if missing:
         raise ValueError(f"{path} missing required columns {missing}. Found: {list(seeds.columns)}")
+
     has_cargo_col = "seed_cargo_type" in seeds.columns
+    has_conf_col = "seed_confidence" in seeds.columns
+    has_notes_col = "notes" in seeds.columns
 
     out = terminals.copy()
+    # Ensure metadata columns exist (may not if WPI/GEM not loaded yet)
+    if "seed_confidence" not in out.columns:
+        out["seed_confidence"] = "UNKNOWN"
+    if "notes" not in out.columns:
+        out["notes"] = ""
+
     n_overwritten = 0
     n_added = 0
     new_rows = []
+    claimed_existing_indices: set[int] = set()  # prevent two seeds claiming same WPI row
 
     for i, seed in seeds.iterrows():
         lat, lon = float(seed["latitude"]), float(seed["longitude"])
         label = str(seed["seed_label"]).upper()
         cargo = str(seed["seed_cargo_type"]).upper() if has_cargo_col and pd.notna(seed.get("seed_cargo_type")) else None
+        conf = str(seed["seed_confidence"]).upper() if has_conf_col and pd.notna(seed.get("seed_confidence")) else "UNKNOWN"
+        note = str(seed["notes"]) if has_notes_col and pd.notna(seed.get("notes")) else ""
 
+        # Find nearest existing terminal not already claimed by another seed
+        nearest_dist = float("inf")
+        nearest_idx = None
         if len(out):
             from geo_utils import haversine_km
             dists = haversine_km(lat, lon, out["latitude"].to_numpy(), out["longitude"].to_numpy())
-            nearest_idx = dists.argmin()
-            nearest_dist = dists[nearest_idx]
-        else:
-            nearest_dist = float("inf")
-            nearest_idx = None
+            # Only consider unclaimed rows
+            for idx in dists.argsort():
+                if int(idx) not in claimed_existing_indices:
+                    nearest_idx = int(idx)
+                    nearest_dist = dists[idx]
+                    break
 
-        if nearest_dist <= match_radius_km:
+        if nearest_dist <= match_radius_km and nearest_idx is not None:
+            # Also reject if another seed row is VERY close (< min_separation_km)
+            # to this same existing terminal - treat as separate terminal instead
+            already_close = any(
+                haversine_km(lat, lon,
+                             float(seeds.loc[j, "latitude"]),
+                             float(seeds.loc[j, "longitude"])) < min_separation_km
+                for j in seeds.index if j != i and j < i  # only already-processed seeds
+            )
+            if already_close:
+                nearest_dist = float("inf")  # force append as new row
+
+        if nearest_dist <= match_radius_km and nearest_idx is not None:
             out.iloc[nearest_idx, out.columns.get_loc("seed_label")] = label
             out.iloc[nearest_idx, out.columns.get_loc("seed_source")] = "manual_coords"
+            out.iloc[nearest_idx, out.columns.get_loc("seed_confidence")] = conf
+            out.iloc[nearest_idx, out.columns.get_loc("notes")] = note
             if cargo:
                 out.iloc[nearest_idx, out.columns.get_loc("seed_cargo_type")] = cargo
                 out.iloc[nearest_idx, out.columns.get_loc("cargo_type_source")] = "manual_coords"
+            claimed_existing_indices.add(nearest_idx)
             n_overwritten += 1
         else:
             new_rows.append({
@@ -349,19 +385,21 @@ def apply_manual_seed_terminals(
                 "seed_source": "manual_coords",
                 "seed_cargo_type": cargo or "UNKNOWN",
                 "cargo_type_source": "manual_coords" if cargo else "none",
+                "seed_confidence": conf,
+                "notes": note,
             })
             n_added += 1
 
     if new_rows:
         out = pd.concat([out, pd.DataFrame(new_rows)], ignore_index=True)
 
-    # Ensure numeric dtype (concatenating an all-NaN empty frame with new
-    # rows can leave these as 'object' dtype, which breaks downstream
-    # geo_utils numpy operations).
+    # Ensure numeric dtype - concatenating onto an all-NaN empty frame
+    # can leave lat/lon as 'object', breaking geo_utils numpy operations.
     out["latitude"] = pd.to_numeric(out["latitude"], errors="coerce")
     out["longitude"] = pd.to_numeric(out["longitude"], errors="coerce")
 
-    print(f"  manual seed terminals: {n_overwritten} existing terminal(s) overwritten, {n_added} new terminal(s) added")
+    print(f"  manual seed terminals: {n_overwritten} existing terminal(s) overwritten, "
+          f"{n_added} new terminal(s) added ({n_overwritten + n_added} total seeded)")
     return out
 
 
@@ -445,6 +483,9 @@ def build_master_terminal_table(
     ]
     out = pd.DataFrame(terminals, columns=_TERMINAL_COLUMNS) if terminals else pd.DataFrame(columns=_TERMINAL_COLUMNS)
     out["norm_name"] = out["terminal_name"].apply(normalise_name)
+    # Metadata columns - populated by apply_manual_seed_terminals()
+    out["seed_confidence"] = "UNKNOWN"
+    out["notes"] = ""
 
     seeds = out.apply(classify_terminal_seed, axis=1, result_type="expand") if len(out) else pd.DataFrame(columns=["seed_label", "seed_source"])
     seeds.columns = ["seed_label", "seed_source"]

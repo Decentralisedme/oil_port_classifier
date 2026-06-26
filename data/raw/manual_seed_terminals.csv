@@ -1,11 +1,26 @@
-terminal_name,latitude,longitude,seed_label
-Houston/Galveston,29.3,-94.8,BOTH
-Singapore,1.25,103.8,BOTH
-Fujairah,25.15,56.35,BOTH
-Ras Tanura / Sea Island,26.65,50.2,LOAD
-Rotterdam,51.95,4.0,DISCHARGE
-Al Basrah,30.5,47.8,LOAD
-Gwangyang,34.91,127.7,DISCHARGE
-Ulsan,35.5,129.4,DISCHARGE
-Malta Freeport,35.8,14.5,STS_HUB
-NY Harbor,40.6,-74.0,DISCHARGE
+terminal_name,latitude,longitude,seed_label,seed_cargo_type,seed_confidence,notes
+Houston,29.3,-94.8,BOTH,CRUDE+PRODUCTS+CHEMICALS,HIGH,Mixed import/export + refining
+Galveston,29.3,-94.8,BOTH,CRUDE+PRODUCTS,HIGH,Mixed crude/products
+Corpus Christi,27.8,-97.4,LOAD,CRUDE+CONDENSATE,VERY_HIGH,US crude export hub
+South Louisiana,29.5,-90.5,BOTH,CRUDE+PRODUCTS,HIGH,Mixed Mississippi delta hub
+Singapore,1.25,103.8,BOTH,CRUDE+PRODUCTS+CHEMICALS,VERY_HIGH,Major STS + refining + trading hub
+Fujairah,25.15,56.35,BOTH,CRUDE+PRODUCTS,VERY_HIGH,Major STS + storage + bunker hub
+Ras Tanura,26.65,50.15,LOAD,CRUDE,VERY_HIGH,Saudi Aramco primary crude export
+Sea Island,26.7,50.2,LOAD,CRUDE,MEDIUM,Saudi offshore crude terminal
+Al Basrah,30.5,47.8,LOAD,CRUDE,VERY_HIGH,Iraq crude export terminal
+Kharg Island,29.2,50.3,LOAD,CRUDE,VERY_HIGH,Iran main crude export - no AISstream coverage currently
+Yanbu,24.1,38.1,LOAD,CRUDE+PRODUCTS,VERY_HIGH,Saudi Red Sea crude export
+Ruwais,24.1,52.7,BOTH,CRUDE+PRODUCTS,VERY_HIGH,UAE refining + export complex
+Sikka,22.4,69.8,BOTH,CRUDE+PRODUCTS,HIGH,India west coast refining hub
+Jamnagar,22.5,69.9,BOTH,CRUDE+PRODUCTS,VERY_HIGH,World largest refinery complex
+Primorsk,60.3,28.7,LOAD,CRUDE,VERY_HIGH,Russian Baltic crude export
+Novorossiysk,44.7,37.8,LOAD,CRUDE+PRODUCTS,VERY_HIGH,Russia Black Sea export dominated
+Rotterdam,51.95,4.0,DISCHARGE,CRUDE+PRODUCTS,HIGH,Europe major crude/products import
+Antwerp-Bruges,51.3,4.3,DISCHARGE,CRUDE+PRODUCTS+CHEMICALS,VERY_HIGH,Europe ARA hub
+Malta Freeport,35.8,14.5,STS_HUB,CRUDE+PRODUCTS,VERY_HIGH,Mediterranean major STS hub
+Gwangyang,34.9,127.7,DISCHARGE,CRUDE+PRODUCTS,HIGH,Korean refining
+Ulsan,35.5,129.4,DISCHARGE,CRUDE+PRODUCTS,HIGH,Korean refining - very large
+Yeosu,34.7,127.7,DISCHARGE,CRUDE+PRODUCTS,VERY_HIGH,Korean refining hub
+Ningbo-Zhoushan,29.9,122.1,DISCHARGE,CRUDE+PRODUCTS,VERY_HIGH,China major crude import
+Qingdao,36.1,120.4,DISCHARGE,CRUDE+PRODUCTS,HIGH,China crude import
+NY Harbor,40.6,-74.0,DISCHARGE,CRUDE+PRODUCTS,HIGH,US East Coast import
