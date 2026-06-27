@@ -7,12 +7,17 @@ End-to-end orchestration. Run from the project root:
 
 Expects:
   data/raw/<something with 'wpi' in the name>.csv|.shp|.zip   (required)
-  data/raw/<something with 'gem'/'goit' in the name>.xlsx     (optional -
-      GOIT is pipeline-centric; gem_facility_type_filter="terminal"
-      (default) keeps only terminal-type rows, dropping pipeline segments)
-  data/raw/osm_oil_terminals.json                      (optional, auto-fetched if bbox given)
+  data/raw/osm_oil_terminals.json         (optional, auto-fetched if osm_bbox given)
   data/raw/<something with 'position' in the name>.parquet|.jsonl  (required for classification)
   data/raw/<something with 'static' in the name>.parquet|.jsonl    (required for classification)
+
+NOTE - GEM/GOIT dropped:
+  GEM's "Global Oil Infrastructure Tracker" download contains only
+  pipeline-segment rows (PipelineName, SegmentName, StartLocation,
+  EndLocation, LengthKm...) with NO latitude/longitude columns.
+  It cannot be used as a terminal point source. Terminal seeding is
+  handled entirely by data/raw/manual_seed_terminals.csv (25 ports)
+  and WPI for the geofencing backbone.
 
 Produces:
   data/processed/master_terminals.parquet
@@ -27,7 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from load_data import load_wpi, load_gem, query_osm_oil_terminals, load_ais_positions, load_ais_static
+from load_data import load_wpi, query_osm_oil_terminals, load_ais_positions, load_ais_static
 from clean_ports import build_master_terminal_table, save_master_table, apply_manual_overrides, apply_manual_seed_terminals
 from classify import (
     detect_stationary_periods,
@@ -46,25 +51,16 @@ OUTPUTS = ROOT / "outputs"
 def main(
     osm_bbox: tuple[float, float, float, float] | None = None,
     ais_time_col: str = "MsgTimestamp",
-    gem_facility_type_filter: str | None = "terminal",
-    gem_sheet_name: str | int | None = 0,
 ):
     OUTPUTS.mkdir(parents=True, exist_ok=True)
 
     # 1. Reference data ------------------------------------------------------
     print("Loading WPI...")
     wpi = load_wpi()
-    print(f"  {len(wpi)} ports")
+    print(f"  {len(wpi)} ports loaded")
 
-    gem = None
-    try:
-        print("Loading GEM/GOIT...")
-        gem = load_gem(sheet_name=gem_sheet_name, facility_type_filter=gem_facility_type_filter)
-        print(f"  {len(gem)} terminal-type facilities (after filter)")
-    except FileNotFoundError as e:
-        print(f"  skipped: {e}")
-    except ValueError as e:
-        print(f"  GEM load failed - check the file's actual columns/sheets: {e}")
+    # GEM/GOIT not used - contains pipeline segments only, no terminal coordinates.
+    # Terminal seed labels come from data/raw/manual_seed_terminals.csv instead.
 
     osm = None
     if osm_bbox is not None:
@@ -75,7 +71,7 @@ def main(
         print("Skipping OSM (no bbox supplied to main()).")
 
     print("Building master terminal table...")
-    terminals = build_master_terminal_table(wpi, gem, osm)
+    terminals = build_master_terminal_table(wpi, gem_df=None, osm_df=osm)
     print("Applying manual terminal-label overrides (name-matched)...")
     terminals = apply_manual_overrides(terminals)
     print("Applying manual seed terminals (coordinate-matched)...")
@@ -124,7 +120,7 @@ def main(
     sts.to_csv(OUTPUTS / "sts_candidates.csv", index=False)
     print(f"  -> outputs/sts_candidates.csv ({len(sts)} candidate events)")
 
-    print("Done.")
+    print("\nDone.")
 
 
 if __name__ == "__main__":
